@@ -27,6 +27,9 @@ jobs:
       - run: pip install -r requirements.txt
       - name: Rebuild ratings from the latest F1DB release
         run: python scripts/build_data.py
+        env:
+          PIN_DRIVER: max-verstappen
+          PIN_SHIFT: "-0.40"
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

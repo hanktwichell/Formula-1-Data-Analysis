@@ -51,25 +51,39 @@ from scipy.sparse.linalg import spsolve
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(ROOT, ".cache", "f1db")
-OUT = os.path.join(ROOT, "site", "data")
+OUT = os.environ.get("OUT_DIR") or os.path.join(ROOT, "site", "data")
 F1DB_URL = "https://github.com/f1db/f1db/releases/latest/download/f1db-sqlite.zip"
 
 # ---- model parameters -------------------------------------------------------
-MAX_Z = 6.0            # drop race gaps beyond this many season-scales (failures, crashes)
-HUBER_K = 2.5          # Huber threshold (in season-scale units) for IRLS
+# Every weight can be overridden from the environment (e.g. HUBER_K=4) to
+# experiment without editing this file.
+def _p(name, default):
+    return float(os.environ.get(name, default))
+
+
+MAX_Z = _p("MAX_Z", 6.0)            # drop race gaps beyond this many season-scales (failures, crashes)
+HUBER_K = _p("HUBER_K", 2.5)          # Huber threshold (in season-scale units) for IRLS
 # Races within one teammate pairing share a pair-season error (setup preference,
 # number-one-driver treatment, upgrade timing). PAIR_RHO = that variance / race
 # variance, so a pairing of n races counts as n / (1 + n * PAIR_RHO) independent
 # races and never more than 1 / PAIR_RHO. It's a stated prior, not fitted: the
 # driver-season terms absorb pair means, so an in-model estimate is biased to ~0.
-PAIR_RHO = 1 / 12
+PAIR_RHO = _p("PAIR_RHO", 1 / 12)
+# Era weight: comparisons from year Y are weighted 0.5 ** ((last season - Y) / ERA_HALFLIFE).
+# 0 disables it (every era counts equally).
+ERA_HALFLIFE = _p("ERA_HALFLIFE", 0)
+# What-if scenario: hold one driver's whole career PIN_SHIFT % (modern terms,
+# negative = faster) away from where the data puts them, and let the rest of
+# the teammate web re-solve around that. Off unless PIN_DRIVER is set.
+PIN_DRIVER = os.environ.get("PIN_DRIVER", "")
+PIN_SHIFT = _p("PIN_SHIFT", 0)
 RIDGE = 0.02           # numerical only: weak drivers must be placed by the web, not pulled to average
-SEASON_ANCHOR = float(os.environ.get("SEASON_ANCHOR", 20.0))  # light pull of each season's race-weighted average driver toward a common level
-AGE_SMOOTH = float(os.environ.get("AGE_SMOOTH", 30.0))  # >0 enables a shared age curve (2nd-difference penalty)
+SEASON_ANCHOR = _p("SEASON_ANCHOR", 20.0)  # light pull of each season's race-weighted average driver toward a common level
+AGE_SMOOTH = _p("AGE_SMOOTH", 30.0)  # >0 enables a shared age curve (2nd-difference penalty)
 AGE_MIN, AGE_MAX = 20, 42
-RIDGE_DRIFT = 0.5      # light pull of each season's drift toward the driver's career level
-RANDOM_WALK = 20.0     # how strongly a driver's rating resists changing from one season to the next
-PEAK_SEASONS = 5       # peak rating = best run of N consecutive seasons
+RIDGE_DRIFT = _p("RIDGE_DRIFT", 0.5)      # light pull of each season's drift toward the driver's career level
+RANDOM_WALK = _p("RANDOM_WALK", 20.0)     # how strongly a driver's rating resists changing from one season to the next
+PEAK_SEASONS = int(_p("PEAK_SEASONS", 5))       # peak rating = best run of N consecutive seasons
 PEAK_MIN_RACES = 6     # seasons with fewer teammate comparisons can't count toward the peak
 MIN_RACES = 10         # distinct races with a valid teammate comparison needed to be ranked
 REF_LAP_SECONDS = 90.0 # for converting % to seconds in the UI
@@ -267,6 +281,9 @@ def main():
         return 1.0 / (1.0 + ps_n * rho)
 
     base_w = pair_weights(PAIR_RHO)
+    if ERA_HALFLIFE > 0:
+        last = max(c["year"] for c in valid)
+        base_w = base_w * np.array([0.5 ** ((last - c["year"]) / ERA_HALFLIFE) for c in valid])
 
     rows, cols, vals = [], [], []
     for k, c in enumerate(valid):
@@ -317,11 +334,12 @@ def main():
     P = coo_matrix((pv, (pr, pc)), shape=(k, nP)).tocsr()
     PtP = (P.T @ P).tocsc()
 
-    def irls(base_w):
+    def irls(base_w, extra=None):
+        # extra = (sparse penalty matrix, rhs vector) for the what-if pin
         w = base_w.copy()
         for it in range(30):
-            A = (X.T @ diags(w) @ X + PtP).tocsc()
-            beta = spsolve(A, X.T @ (w * y))
+            A = (X.T @ diags(w) @ X + PtP + (extra[0] if extra else 0)).tocsc()
+            beta = spsolve(A, X.T @ (w * y) + (extra[1] if extra else 0))
             resid = y - X @ beta
             hub = np.where(np.abs(resid) <= HUBER_K, 1.0, HUBER_K / np.maximum(np.abs(resid), 1e-9))
             w_new = base_w * hub
@@ -331,6 +349,19 @@ def main():
         return A, beta, resid, w, it + 1
 
     A, beta, resid, w, its = irls(base_w)
+    if PIN_DRIVER:
+        # pin every season rating (base + drift + age) at its fitted value + shift
+        strength = 1e5
+        pr_, pc_, pv_, rhs = [], [], [], np.zeros(nP)
+        for k_, (d_, yr_) in enumerate(key for key in dseasons if key[0] == PIN_DRIVER):
+            cols_ = [idx[d_], sidx[(d_, yr_)]] + ([age_col(d_, yr_)] if use_age else [])
+            target = sum(beta[c_] for c_ in cols_) + PIN_SHIFT / ref_scale
+            for c_ in cols_:
+                pr_.append(k_); pc_.append(c_); pv_.append(1.0)
+                rhs[c_] += strength * target
+        G = coo_matrix((pv_, (pr_, pc_)), shape=(max(pr_) + 1, nP)).tocsr()
+        A, beta, resid, w, its = irls(base_w, ((G.T @ G * strength).tocsc(), rhs))
+        log("what-if: %s pinned %+.3f%% from the data's estimate" % (PIN_DRIVER, PIN_SHIFT))
     log("IRLS iterations:", its, "params:", nP)
 
     sigma2 = float(np.sum(w * resid ** 2) / max(1.0, np.sum(w) - nD))
