@@ -151,6 +151,7 @@ def main():
         return [r["time_millis"], None, None]
 
     comps = []  # one row per (race, driver a, driver b) with a < b
+    calib = []  # (Q1, Q2, Q3 gap) for pairs where both drivers reached Q3
     for (race_id, ent, cons), rows in by_team.items():
         seen = {}
         for r in rows:  # a driver can appear twice only in data glitches; keep first
@@ -171,7 +172,12 @@ def main():
                 if sess is None:
                     continue
                 gap = 100.0 * math.log(ta[sess] / tb[sess])  # >0: a slower than b
-                comps.append(dict(
+                if all(ta) and all(tb):
+                    calib.append([100.0 * math.log(ta[k_] / tb[k_]) for k_ in range(3)])
+                # in the knockout era, if either driver went on to a later session
+                # they may not have needed a full lap in this one
+                advanced = sess < 2 and bool(ta[sess + 1] or tb[sess + 1])
+                comps.append(dict(advanced=advanced, sess=sess,
                     race_id=race_id, year=rc["year"], round=rc["round"], date=rc["date"],
                     a=a["driver_id"], b=b["driver_id"], entrant=ent, constructor=cons,
                     ta=ta[sess], tb=tb[sess], session=("Q%d" % (sess + 1)) if (a["q1_millis"] and b["q1_millis"]) else "Q",
@@ -179,10 +185,33 @@ def main():
                 ))
     log("raw teammate comparisons:", len(comps))
 
+    # Knockout-session correction. Drivers who are comfortably through rarely do
+    # a full lap in Q1/Q2, so gaps measured there are compressed. Calibrate on
+    # pairs who both reached Q3: orient each pair by an independent session and
+    # compare the mean gap in Q1 (or Q2) with the same pair's Q3 gap. Then, when
+    # a comparison had to fall back to Q1/Q2 because one driver advanced and the
+    # other didn't, scale it back up. Pairs eliminated together were both flat
+    # out, so they're left alone. The displayed gaps stay the real lap times.
+    cal = np.array(calib)
+    o2 = np.sign(cal[:, 1]); o1 = np.sign(cal[:, 0])
+    ko_factor = {
+        0: float(np.mean(o2 * cal[:, 0]) / np.mean(o2 * cal[:, 2])),
+        1: float(np.mean(o1 * cal[:, 1]) / np.mean(o1 * cal[:, 2])),
+    }
+    log("knockout compression (from %d both-in-Q3 pairs): Q1 gaps are %.2fx, Q2 gaps %.2fx the Q3 gap" % (
+        len(cal), ko_factor[0], ko_factor[1]))
+    n_adj = 0
+    for c in comps:
+        c["mgap"] = c["gap"]
+        if c["advanced"]:
+            c["mgap"] = c["gap"] / ko_factor[c["sess"]]
+            n_adj += 1
+    log("comparisons corrected for an advancing driver:", n_adj)
+
     # ---- season scale (how spread teammate gaps are in a given era) ---------
     by_year = defaultdict(list)
     for c in comps:
-        by_year[c["year"]].append(abs(c["gap"]))
+        by_year[c["year"]].append(abs(c["mgap"]))
     years = sorted(by_year)
     raw_scale = {y: float(np.median(by_year[y])) for y in years}
     scale = {}
@@ -200,7 +229,7 @@ def main():
         log("  scale %d: %.3f%%" % (y, scale[y]))
 
     for c in comps:
-        c["z"] = c["gap"] / scale[c["year"]]
+        c["z"] = c["mgap"] / scale[c["year"]]
         c["valid"] = abs(c["z"]) <= MAX_Z
     valid = [c for c in comps if c["valid"]]
     log("valid comparisons:", len(valid), "dropped:", len(comps) - len(valid))
