@@ -173,7 +173,7 @@
       <div class="tm-stats">
         ${t.n ? `<span>Mean gap <b class="${F1.cls(t.mean)}">${F1.pct(t.mean)}</b></span>` : ""}
         ${t.adjMedian != null ? `<span title="Median gap rescaled to modern-era teammate spread">Era-adjusted <b class="${F1.cls(t.adjMedian)}">${F1.pct(t.adjMedian)}</b></span>` : ""}
-        ${t.expected != null ? `<span title="Gap implied by both drivers' season ratings in the years they were teammates (before any rookie penalty)">Model expects <b class="${F1.cls(t.expected)}">${F1.pct(t.expected)}</b></span>` : ""}
+        ${t.expected != null ? `<span title="Gap implied by both drivers' season ratings in the years they were teammates">Model expects <b class="${F1.cls(t.expected)}">${F1.pct(t.expected)}</b></span>` : ""}
         ${seasonRows}
       </div>
       <details class="tm-detail"><summary>Race by race (${t.races.length})</summary>

@@ -12,7 +12,7 @@ A static GitHub Pages site that ranks the 100 fastest Formula 1 drivers over one
 
 1. Every qualifying session since 1950 (Indy 500 excluded) gives a teammate gap. Teammates share an entrant *and* a constructor. In the knockout era the gap comes from the last session both drivers set a time in.
 2. Gaps are divided by that season's typical teammate gap, so every era sits on one scale.
-3. The whole teammate web is solved at once: per-driver-season ratings with a shared age curve, a random-walk career drift, rookie terms, a light per-season anchor and Huber-robust weighting. Thin drivers are **not** shrunk inside the fit, so a win over a weak teammate is only worth what that teammate proved elsewhere in the web.
+3. The whole teammate web is solved at once: per-driver-season ratings with a shared age curve, a random-walk career drift, a light per-season anchor, pairing-level noise and Huber-robust weighting. Thin drivers are **not** shrunk inside the fit, so a win over a weak teammate is only worth what that teammate proved elsewhere in the web.
 4. Uncertainty is applied only when ranking, via empirical-Bayes shrinkage of each driver's peak/career estimate by its standard error.
 
 ## Build

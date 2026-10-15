@@ -87,7 +87,7 @@
     document.getElementById("board-title").textContent =
       (metric === "peak" ? "Peak one-lap pace" : "Career one-lap pace") + (era ? ` · drivers active in the ${era}s` : "");
     document.getElementById("board-note").textContent = metric === "peak"
-      ? `Average of each driver's best ${meta.peakSeasons} seasons. Ranked drivers need ${meta.minRaces}+ races against a teammate.`
+      ? `Each driver's best run of ${meta.peakSeasons} consecutive seasons. Ranked drivers need ${meta.minRaces}+ races against a teammate.`
       : `Every season weighted by races. Ranked drivers need ${meta.minRaces}+ races against a teammate.`;
 
     const lo = -0.95, hi = 0.25;

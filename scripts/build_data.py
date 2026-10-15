@@ -18,9 +18,10 @@ Pipeline
    observed gaps (robust weighted least squares). Because the system is solved
    jointly, beating a teammate is only worth as much as that teammate's own
    standing elsewhere in the web: Pizzonia is rated through Montoya, Yoong
-   through Alonso, and so on. Each season's race-weighted average driver is
-   anchored to the same level so 75 years of chaining can't drift. Ratings drift along a penalised random walk
-   across a career, and a shared rookie term absorbs first-season deficits.
+   through Alonso, and so on. A shared age curve and a light per-season anchor
+   keep 75 years of chaining from drifting, and each driver's rating follows a
+   penalised random walk across a career. There are no bonuses: every season
+   rating is the pace the driver actually showed, rookie years included.
 6. Only after the network is solved is uncertainty handled: each driver's
    peak/career estimate is shrunk toward the field in proportion to its
    standard error (empirical Bayes), so thinly-linked drivers can't top the
@@ -56,14 +57,19 @@ F1DB_URL = "https://github.com/f1db/f1db/releases/latest/download/f1db-sqlite.zi
 # ---- model parameters -------------------------------------------------------
 MAX_Z = 6.0            # drop race gaps beyond this many season-scales (failures, crashes)
 HUBER_K = 2.5          # Huber threshold (in season-scale units) for IRLS
-PAIR_SEASON_CAP = 12   # one pair-season can contribute at most this many race-equivalents
+# Races within one teammate pairing share a pair-season error (setup preference,
+# number-one-driver treatment, upgrade timing). PAIR_RHO = that variance / race
+# variance, so a pairing of n races counts as n / (1 + n * PAIR_RHO) independent
+# races and never more than 1 / PAIR_RHO. It's a stated prior, not fitted: the
+# driver-season terms absorb pair means, so an in-model estimate is biased to ~0.
+PAIR_RHO = 1 / 12
 RIDGE = 0.02           # numerical only: weak drivers must be placed by the web, not pulled to average
 SEASON_ANCHOR = float(os.environ.get("SEASON_ANCHOR", 20.0))  # light pull of each season's race-weighted average driver toward a common level
 AGE_SMOOTH = float(os.environ.get("AGE_SMOOTH", 30.0))  # >0 enables a shared age curve (2nd-difference penalty)
 AGE_MIN, AGE_MAX = 20, 42
 RIDGE_DRIFT = 0.5      # light pull of each season's drift toward the driver's career level
 RANDOM_WALK = 20.0     # how strongly a driver's rating resists changing from one season to the next
-PEAK_SEASONS = 3       # peak rating = best run of N consecutive seasons
+PEAK_SEASONS = 5       # peak rating = best run of N consecutive seasons
 PEAK_MIN_RACES = 6     # seasons with fewer teammate comparisons can't count toward the peak
 MIN_RACES = 10         # distinct races with a valid teammate comparison needed to be ranked
 REF_LAP_SECONDS = 90.0 # for converting % to seconds in the UI
@@ -193,24 +199,9 @@ def main():
     for y in years[::8]:
         log("  scale %d: %.3f%%" % (y, scale[y]))
 
-    # rookie experience: number of prior qualifying sessions for each driver at each race
-    quali_sorted = sorted(
-        (r for r in quali if races[r["race_id"]]["grand_prix_id"] != "indianapolis"),
-        key=lambda r: (races[r["race_id"]]["date"], r["race_id"]))
-    exp_at = {}
-    cnt = defaultdict(int)
-    for r in quali_sorted:
-        exp_at[(r["race_id"], r["driver_id"])] = cnt[r["driver_id"]]
-        cnt[r["driver_id"]] += 1
-
-    def exp_bin(n):
-        return 0 if n < 8 else 1 if n < 20 else None  # None = experienced (baseline)
-
     for c in comps:
         c["z"] = c["gap"] / scale[c["year"]]
         c["valid"] = abs(c["z"]) <= MAX_Z
-        c["exp_a"] = exp_bin(exp_at[(c["race_id"], c["a"])])
-        c["exp_b"] = exp_bin(exp_at[(c["race_id"], c["b"])])
     valid = [c for c in comps if c["valid"]]
     log("valid comparisons:", len(valid), "dropped:", len(comps) - len(valid))
 
@@ -224,10 +215,8 @@ def main():
     dseasons = sorted({(c["a"], c["year"]) for c in valid} | {(c["b"], c["year"]) for c in valid})
     sidx = {k: nD + i for i, k in enumerate(dseasons)}
     nS = len(dseasons)
-    nE = 2
-    E0 = nD + nS
     nA = AGE_MAX - AGE_MIN + 1
-    A0 = E0 + nE
+    A0 = nD + nS
     nP = A0 + nA
     use_age = AGE_SMOOTH > 0
 
@@ -239,7 +228,16 @@ def main():
     pair_season_n = defaultdict(int)
     for c in valid:
         pair_season_n[(c["a"], c["b"], c["year"])] += 1
-    base_w = np.array([min(1.0, PAIR_SEASON_CAP / pair_season_n[(c["a"], c["b"], c["year"])]) for c in valid])
+    ps_key = [(c["a"], c["b"], c["year"]) for c in valid]
+    ps_n = np.array([pair_season_n[k_] for k_ in ps_key], dtype=float)
+
+    def pair_weights(rho):
+        # races within one pairing share a pair-season error (setup preference,
+        # team focus, upgrade timing), so n races are worth n / (1 + n*rho)
+        # independent ones: one teammate-season can never be near-certain proof
+        return 1.0 / (1.0 + ps_n * rho)
+
+    base_w = pair_weights(PAIR_RHO)
 
     rows, cols, vals = [], [], []
     for k, c in enumerate(valid):
@@ -248,10 +246,6 @@ def main():
         vals += [1.0, 1.0, -1.0, -1.0]
         if use_age:
             rows += [k, k]; cols += [age_col(c["a"], c["year"]), age_col(c["b"], c["year"])]; vals += [1.0, -1.0]
-        if c["exp_a"] is not None:
-            rows.append(k); cols.append(E0 + c["exp_a"]); vals.append(1.0)
-        if c["exp_b"] is not None:
-            rows.append(k); cols.append(E0 + c["exp_b"]); vals.append(-1.0)
     nObs = len(valid)
     X = coo_matrix((vals, (rows, cols)), shape=(nObs, nP)).tocsr()
     y = np.array([c["z"] for c in valid])
@@ -269,8 +263,6 @@ def main():
         for y0, y1 in zip(yrs, yrs[1:]):
             s_ = math.sqrt(RANDOM_WALK / (y1 - y0))
             pr += [k, k]; pc += [sidx[(d, y0)], sidx[(d, y1)]]; pv += [s_, -s_]; k += 1
-    for e in range(nE):
-        pr.append(k); pc.append(E0 + e); pv.append(1.0); k += 1
     if use_age:
         sm = math.sqrt(AGE_SMOOTH)
         for a in range(1, nA - 1):
@@ -296,22 +288,24 @@ def main():
     P = coo_matrix((pv, (pr, pc)), shape=(k, nP)).tocsr()
     PtP = (P.T @ P).tocsc()
 
-    w = base_w.copy()
-    for it in range(30):
-        A = (X.T @ diags(w) @ X + PtP).tocsc()
-        beta = spsolve(A, X.T @ (w * y))
-        resid = y - X @ beta
-        hub = np.where(np.abs(resid) <= HUBER_K, 1.0, HUBER_K / np.maximum(np.abs(resid), 1e-9))
-        w_new = base_w * hub
-        if np.max(np.abs(w_new - w)) < 1e-4:
-            break
-        w = w_new
-    log("IRLS iterations:", it + 1, "params:", nP)
+    def irls(base_w):
+        w = base_w.copy()
+        for it in range(30):
+            A = (X.T @ diags(w) @ X + PtP).tocsc()
+            beta = spsolve(A, X.T @ (w * y))
+            resid = y - X @ beta
+            hub = np.where(np.abs(resid) <= HUBER_K, 1.0, HUBER_K / np.maximum(np.abs(resid), 1e-9))
+            w_new = base_w * hub
+            if np.max(np.abs(w_new - w)) < 1e-4:
+                break
+            w = w_new
+        return A, beta, resid, w, it + 1
+
+    A, beta, resid, w, its = irls(base_w)
+    log("IRLS iterations:", its, "params:", nP)
 
     sigma2 = float(np.sum(w * resid ** 2) / max(1.0, np.sum(w) - nD))
     cov = np.linalg.inv(A.toarray()) * sigma2
-    exp_eff = beta[E0:E0 + nE]
-    log("rookie effects (z): first 8 races %+.2f, races 8-19 %+.2f" % tuple(exp_eff))
 
     adj = coo_matrix((np.ones(len(valid)), ([idx[c["a"]] for c in valid], [idx[c["b"]] for c in valid])), shape=(nD, nD))
     ncomp, labels = connected_components(adj, directed=False)
@@ -377,17 +371,27 @@ def main():
         return ((v[0] - center) * ref_scale, v[1] * ref_scale)
 
     def eb_shrink(est):
-        """Empirical-Bayes shrink {driver: (value, se)} toward the eligible-field mean."""
+        """Empirical-Bayes shrink {driver: (value, se)}. The prior mean depends on
+        how many races a driver has against teammates: drivers whose careers
+        ended after a dozen races were, as a group, well short of average, so an
+        uncertain estimate is pulled toward what's typical for that sample size,
+        not toward the average ranked driver. Precise estimates barely move."""
+        x = np.array([math.log(len(races_cmp[d])) for d in eligible])
         vals = np.array([est[d][0] for d in eligible])
         ses = np.array([est[d][1] for d in eligible])
-        mu = float(np.mean(vals))
-        tau2 = max(float(np.var(vals) - np.mean(ses ** 2)), 1e-6)
+        wts = 1.0 / (ses ** 2 + 0.05 ** 2)
+        Xp = np.vstack([np.ones_like(x), x]).T
+        coef = np.linalg.solve(Xp.T @ (Xp * wts[:, None]), Xp.T @ (wts * vals))
+        res = vals - Xp @ coef
+        tau2 = max(float(np.mean(res ** 2) - np.mean(ses ** 2)), 1e-6)
         out = {}
         for d, (v, e) in est.items():
+            mu = coef[0] + coef[1] * math.log(max(len(races_cmp[d]), 1))
             k = tau2 / (tau2 + e * e)
             out[d] = (mu + k * (v - mu), math.sqrt(k) * e)
-        log("EB shrink: field sd %.3f%%, mean shrink factor %.2f" % (
-            math.sqrt(tau2), float(np.mean([tau2 / (tau2 + e * e) for e in ses]))))
+        log("EB prior mean: %+.3f%% at 10 races, %+.3f%% at 50, %+.3f%% at 200; spread sd %.3f%%, mean shrink %.2f" % (
+            coef[0] + coef[1] * math.log(10), coef[0] + coef[1] * math.log(50), coef[0] + coef[1] * math.log(200),
+            math.sqrt(tau2), float(np.mean(tau2 / (tau2 + ses ** 2)))))
         return out
 
     if use_age:
@@ -535,7 +539,6 @@ def main():
         "drivers": len(ids),
         "eligible": len(ranked),
         "peakSeasons": PEAK_SEASONS,
-        "rookie": [round(float(v * ref_scale), 4) for v in exp_eff],
         "seasonScale": {str(y): round(scale[y], 4) for y in years},
     }
     with open(os.path.join(OUT, "rankings.json"), "w") as f:
