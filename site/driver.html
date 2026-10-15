@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver · Teammate Delta</title>
+<meta name="description" content="Formula 1 driver profile: team history, teammates and qualifying pace gap to each.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'%3E%3Cpolygon points='6,0 32,0 26,20 0,20' fill='%23e10600'/%3E%3C/svg%3E">
+<style>
+  .gapbars { display: grid; gap: 6px; }
+  .gaprow { display: grid; grid-template-columns: minmax(110px, 200px) 1fr 86px; gap: 12px; align-items: center; font-size: 14px; text-decoration: none; padding: 3px 6px; border-radius: 6px; }
+  .gaprow:hover { background: var(--surface-2); }
+  .gaprow .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .gaprow .nm small { color: var(--faint); font-weight: 400; margin-left: 4px; }
+  .gaprow .track { position: relative; height: 14px; }
+  .gaprow .track::before { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--faint); }
+  .gaprow .b { position: absolute; top: 2px; height: 10px; border-radius: 2px; }
+  .gaprow .b.faster { background: var(--faster); }
+  .gaprow .b.slower { background: var(--slower); }
+  .gaprow .v { font-family: var(--mono); text-align: right; font-weight: 700; }
+  .gap-axis { display: grid; grid-template-columns: minmax(110px, 200px) 1fr 86px; gap: 12px; font-size: 12px; color: var(--faint); padding: 0 6px; }
+  .gap-axis div:nth-child(2) { display: flex; justify-content: space-between; }
+  .bio { color: var(--muted); margin-top: 8px; font-size: 15px; }
+  .peaks { font-size: 13px; color: var(--muted); }
+  @media (max-width: 760px) {
+    .gaprow, .gap-axis { grid-template-columns: 96px 1fr 70px; gap: 8px; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap" id="main"><div class="loading">Loading driver…</div></main>
+
+<script src="assets/common.js"></script>
+<script src="assets/web.js"></script>
+<script>
+(async function () {
+  F1.header("");
+  const id = new URLSearchParams(location.search).get("id");
+  const main = document.getElementById("main");
+  const rk = await F1.getJSON("data/rankings.json");
+  F1.footer(rk.meta);
+  const meta = rk.meta;
+  if (!id) { location.replace("search.html"); return; }
+  let d;
+  try { d = await F1.getJSON(`data/drivers/${encodeURIComponent(id)}.json`); }
+  catch (e) { main.innerHTML = `<div class="empty">No driver found for “${F1.esc(id)}”. <a href="search.html">Search drivers →</a></div>`; return; }
+  document.title = `${d.name} · Teammate Delta`;
+
+  const esc = F1.esc, LAP = meta.refLapSeconds;
+  const rated = d.rating != null;
+  const age = (a, b) => {
+    const x = new Date(a), y = b ? new Date(b) : new Date();
+    let n = y.getFullYear() - x.getFullYear();
+    if (y.getMonth() < x.getMonth() || (y.getMonth() === x.getMonth() && y.getDate() < x.getDate())) n--;
+    return n;
+  };
+  const fmtDate = (s) => new Date(s + "T00:00:00").toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+  const tm = d.teammates || [];
+  const allRaces = tm.flatMap((t) => t.races.filter((r) => r[10]));
+  const W = tm.reduce((s, t) => s + t.w, 0), L = tm.reduce((s, t) => s + t.l, 0);
+
+  // ---- header ----
+  const badge = d.rank
+    ? `<div class="rank-badge"><span class="n">#${d.rank}</span><span class="l">Peak pace</span></div>`
+    : `<div class="rank-badge unranked"><span class="n" style="font-size:20px">Unranked</span><span class="l">${rated ? (d.connected ? `fewer than ${meta.minRaces} races vs. teammates` : "not linked to main grid") : "no teammate data"}</span></div>`;
+  const bio = [
+    d.nat ? esc(d.nat.demonym || d.nat.name) : "",
+    d.dob ? `born ${fmtDate(d.dob)}${d.birthplace ? `, ${esc(d.birthplace)}` : ""}` : "",
+    d.dod ? `died ${fmtDate(d.dod)} (aged ${age(d.dob, d.dod)})` : "",
+    d.number ? `#${esc(d.number)}` : "",
+  ].filter(Boolean).join(" · ");
+
+  let html = `
+  <section class="profile-head">
+    <div>
+      <div class="eyebrow">${F1.years(d.first, d.last)}${d.titles ? ` · ${d.titles}× World Champion` : ""}</div>
+      <h1 style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">${F1.flag(d.nat)}${esc(d.name)}</h1>
+      <div class="bio">${bio}</div>
+    </div>
+    ${badge}
+  </section>
+  <section class="tiles" style="margin-bottom:8px">
+    ${tile("Peak pace", rated ? `<span class="${F1.cls(d.rating)}">${F1.pct(d.rating)}</span>` : "—",
+      rated ? `${F1.secs(d.rating, LAP)} per ${LAP}s lap · ±${d.se.toFixed(3)}%` : "No teammate comparisons")}
+    ${tile("Career pace", rated ? `<span class="${F1.cls(d.career)}">${F1.pct(d.career)}</span>` : "—",
+      rated ? `${d.careerRank ? `#${d.careerRank} career · ` : ""}${F1.secs(d.career, LAP)} per lap` : "")}
+    ${tile("Qualifying H2H", W + L ? `${Math.round((W / (W + L)) * 100)}%` : "—", `${W}–${L} vs. teammates`)}
+    ${tile("Teammates", tm.length, d.opp != null ? `avg teammate rating <span class="${F1.cls(d.opp)}">${F1.pct(d.opp)}</span>` : `${allRaces.length} comparisons`)}
+    ${tile("Starts", d.starts, `${d.wins} wins · ${d.poles} poles · ${d.podiums} podiums`)}
+  </section>
+  <p class="legend-note">Pace is the estimated qualifying gap to the median rated driver, in modern-era terms (negative = faster). ${d.peakYears && d.peakYears.length ? `Peak uses ${d.peakYears.join(", ")}.` : ""} <a href="methodology.html">Method →</a></p>`;
+
+  // ---- pace trajectory ----
+  if (d.pace && d.pace.length) {
+    html += `<section class="section"><div class="section-head"><div><h2>Pace by season</h2>
+      <div class="legend-note">Season rating ±1 standard error. Up is faster. Red points are the seasons used for the peak rating; the dashed line is the median rated driver.</div></div></div>
+      <div class="card chart-wrap"><div class="chart" id="chart" style="position:relative"></div></div></section>`;
+  }
+
+  // ---- teammate web ----
+  if (tm.length) {
+    html += `<section class="section"><div class="section-head"><div><h2>Teammate web</h2>
+      <div class="legend-note">Inner ring: everyone ${esc(d.name)} shared a car with. Outer ring: their other teammates, which is how this rating connects to the rest of the sport. Spokes are green where ${esc(d.name.split(" ").slice(-1)[0])} was faster (era-adjusted) and thicker for more races together. Node colour shows each driver's own peak rating. Click any driver to open their profile.</div></div>
+      <a class="theme-toggle" style="width:auto;padding:5px 12px;text-decoration:none;height:auto" href="compare.html?a=${encodeURIComponent(d.id)}">Compare with… →</a></div>
+      <div class="card chart-wrap"><div id="web" style="max-width:760px;margin:0 auto"></div></div></section>`;
+  }
+
+  // ---- teammate gaps ----
+  if (tm.length) {
+    const withN = tm.filter((t) => t.n > 0);
+    const maxAbs = Math.max(0.5, ...withN.map((t) => Math.abs(t.median)));
+    const lim = Math.ceil(maxAbs * 2) / 2;
+    html += `<section class="section"><div class="section-head"><div><h2>Gap to every teammate</h2>
+      <div class="legend-note">Median qualifying gap across all races together, in actual lap-time %. Left/green means ${esc(d.name.split(" ").slice(-1)[0])} was faster.</div></div></div>
+      <div class="card card-pad">
+        <div class="gap-axis"><div></div><div><span>${F1.pct(-lim, 1)}</span><span>0</span><span>${F1.pct(lim, 1)}</span></div><div></div></div>
+        <div class="gapbars">${withN.map((t) => {
+          const v = t.median, w = (Math.min(Math.abs(v), lim) / lim) * 50;
+          const left = v < 0 ? 50 - w : 50;
+          return `<a class="gaprow" href="#tm-${esc(t.id)}"><div class="nm">${esc(t.name)}<small>${F1.years(t.years[0], t.years[t.years.length - 1])}</small></div>
+            <div class="track"><div class="b ${F1.cls(v)}" style="left:${left}%;width:${w}%"></div></div>
+            <div class="v ${F1.cls(v)}">${F1.pct(v, 2)}</div></a>`;
+        }).join("")}</div>
+      </div></section>`;
+
+    html += `<section class="section"><div class="section-head"><h2>Teammate head-to-heads</h2></div><div class="tm-list">${tm.map(tmCard).join("")}</div></section>`;
+  }
+
+  // ---- team history ----
+  if (d.seasons && d.seasons.length) {
+    html += `<section class="section"><div class="section-head"><div><h2>Team history</h2><div class="legend-note">Every season and entry, with that season's teammates.</div></div></div>
+      <div class="card"><div class="table-wrap"><table>
+      <thead><tr><th>Season</th><th>Team</th><th>Car</th><th>Teammate(s)</th><th class="r">Races</th><th class="r">Pts</th><th class="r">Wins</th><th class="r">Best</th><th class="r">Champ.</th></tr></thead>
+      <tbody>${d.seasons.map((s) => {
+        const mates = tm.filter((t) => t.races.some((r) => r[0] === s.year && r[3] === s.constructor)).map((t) => `<a href="${F1.driverURL(t.id)}">${esc(t.name)}</a>`);
+        return `<tr><td class="num">${s.year}</td><td>${esc(s.entrant)}</td><td>${esc(s.constructor)}${s.engine && s.engine !== s.constructor ? ` <span class="faint">${esc(s.engine)}</span>` : ""}</td>
+        <td>${mates.join(", ") || '<span class="faint">—</span>'}</td>
+        <td class="r num">${s.races}</td><td class="r num">${fmtPts(s.points)}</td><td class="r num">${s.wins || ""}</td><td class="r num">${s.best ? `P${s.best}` : "—"}</td>
+        <td class="r">${s.champ === 1 ? '<span class="champ">Champion</span>' : s.champ ? `P${s.champ}` : "—"}</td></tr>`;
+      }).join("")}</tbody></table></div></div></section>`;
+  }
+
+  main.innerHTML = html;
+  if (d.pace && d.pace.length) drawChart(document.getElementById("chart"), d.pace, d.peakYears || []);
+  if (tm.length) F1Web.load().then((g) => { if (!F1Web.drawEgo(document.getElementById("web"), g, d.id)) document.getElementById("web").closest("section").remove(); });
+  if (location.hash) { const t = document.querySelector(location.hash); if (t) t.scrollIntoView(); }
+
+  function tile(k, v, s) { return `<div class="card tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`; }
+  function fmtPts(p) { return p ? (Number.isInteger(p) ? p : p.toFixed(1)) : "0"; }
+
+  function tmCard(t) {
+    const tot = t.w + t.l || 1;
+    const valid = t.races.filter((r) => r[10]);
+    const secMed = valid.length ? median(valid.map((r) => (r[5] - r[6]) / 1000)) : null;
+    const tmRank = t.rank ? `#${t.rank}` : t.rating != null ? "unranked" : "";
+    const surname = d.name.split(" ").slice(-1)[0];
+    const seasonRows = t.bySeason.length > 1 ? t.bySeason.map((s) => `<span>${s.year}: <b>${s.w}–${s.n - s.w}</b> <span class="${F1.cls(s.median)}">${F1.pct(s.median, 2)}</span></span>`).join("") : "";
+    return `<article class="card tm" id="tm-${esc(t.id)}">
+      <div class="tm-top">
+        <div>
+          <a class="tm-name" href="${F1.driverURL(t.id)}">${esc(t.name)}</a>
+          <div class="tm-meta">${F1.years(t.years[0], t.years[t.years.length - 1])} · ${esc(t.teams.join(", "))}${tmRank ? ` · teammate pace ${tmRank}` : ""}</div>
+        </div>
+        <div class="tm-gap">${t.n ? `<div class="big ${F1.cls(t.median)}">${F1.pct(t.median)}</div><div class="sub">median gap · ${secMed == null ? "" : `${secMed > 0 ? "+" : secMed < 0 ? "−" : "±"}${Math.abs(secMed).toFixed(3)}s`}</div>` : `<div class="sub">no valid comparisons</div>`}</div>
+      </div>
+      ${t.n ? `<div class="h2hbar" role="img" aria-label="${t.w} to ${t.l}"><div class="me" style="width:${(t.w / tot) * 100}%"></div><div class="them" style="width:${(t.l / tot) * 100}%"></div></div>
+      <div class="h2h-labels"><span>${esc(surname)} <b>${t.w}</b></span><span><b>${t.l}</b> ${esc(t.name.split(" ").slice(-1)[0])}</span></div>` : ""}
+      <div class="tm-stats">
+        ${t.n ? `<span>Mean gap <b class="${F1.cls(t.mean)}">${F1.pct(t.mean)}</b></span>` : ""}
+        ${t.adjMedian != null ? `<span title="Median gap rescaled to modern-era teammate spread">Era-adjusted <b class="${F1.cls(t.adjMedian)}">${F1.pct(t.adjMedian)}</b></span>` : ""}
+        ${t.expected != null ? `<span title="Gap implied by both drivers' season ratings in the years they were teammates (before any rookie penalty)">Model expects <b class="${F1.cls(t.expected)}">${F1.pct(t.expected)}</b></span>` : ""}
+        ${seasonRows}
+      </div>
+      <details class="tm-detail"><summary>Race by race (${t.races.length})</summary>
+        <div class="table-wrap"><table><thead><tr><th>Race</th><th>Team</th><th>Session</th><th class="r">${esc(surname)}</th><th class="r">${esc(t.name.split(" ").slice(-1)[0])}</th><th class="r">Gap</th><th class="r">Δ s</th><th class="r">Quali pos</th></tr></thead>
+        <tbody>${t.races.map((r) => `<tr class="${r[10] ? "" : "invalid"}" ${r[10] ? "" : 'title="Excluded as an outlier (likely a problem in the session)"'}>
+          <td>${r[0]} ${esc(r[2])}</td><td>${esc(r[3])}</td><td>${esc(r[4])}</td>
+          <td class="r mono">${F1.lapTime(r[5])}</td><td class="r mono">${F1.lapTime(r[6])}</td>
+          <td class="r mono ${F1.cls(r[7])}">${F1.pct(r[7])}</td>
+          <td class="r mono ${F1.cls(r[7])}">${((r[5] - r[6]) / 1000 > 0 ? "+" : "") + ((r[5] - r[6]) / 1000).toFixed(3)}</td>
+          <td class="r num">${r[8] ? `P${r[8]}` : "—"} / ${r[9] ? `P${r[9]}` : "—"}</td></tr>`).join("")}</tbody></table></div>
+      </details>
+    </article>`;
+  }
+
+  function median(a) { const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+
+  function drawChart(el, pace, peaks) {
+    const Wd = 1000, H = 300, m = { l: 64, r: 16, t: 16, b: 30 };
+    const xs = pace.map((p) => p.year);
+    const x0 = Math.min(...xs) - 0.5, x1 = Math.max(...xs) + 0.5;
+    const lo = Math.min(...pace.map((p) => p.rating - p.se), -0.2), hi = Math.max(...pace.map((p) => p.rating + p.se), 0.2);
+    const pad = (hi - lo) * 0.08;
+    const yLo = lo - pad, yHi = hi + pad;
+    const X = (v) => m.l + ((v - x0) / (x1 - x0)) * (Wd - m.l - m.r);
+    const Y = (v) => m.t + ((v - yLo) / (yHi - yLo)) * (H - m.t - m.b); // negative (faster) at top
+    const step = niceStep((yHi - yLo) / 5);
+    let grid = "", axis = "";
+    for (let i = Math.ceil(yLo / step); i * step <= yHi; i++) {
+      const v = i * step;
+      grid += `<line x1="${m.l}" x2="${Wd - m.r}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+      axis += `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${F1.pct(v, 2)}</text>`;
+    }
+    const span = x1 - x0, ystep = span > 14 ? 2 : 1;
+    for (let yr = Math.ceil(x0); yr <= x1; yr += ystep) axis += `<text x="${X(yr)}" y="${H - 8}" text-anchor="middle">${yr}</text>`;
+    // split into runs so gaps in a career aren't joined
+    const runs = []; let cur = [];
+    pace.forEach((p, i) => { if (i && p.year - pace[i - 1].year > 1) { runs.push(cur); cur = []; } cur.push(p); });
+    runs.push(cur);
+    const band = runs.map((r) => r.length > 1
+      ? `<path class="band" d="M${r.map((p) => `${X(p.year)},${Y(p.rating - p.se)}`).join("L")}L${r.slice().reverse().map((p) => `${X(p.year)},${Y(p.rating + p.se)}`).join("L")}Z"/>`
+      : `<rect class="band" x="${X(r[0].year) - 6}" width="12" y="${Y(r[0].rating - r[0].se)}" height="${Y(r[0].rating + r[0].se) - Y(r[0].rating - r[0].se)}" rx="3"/>`).join("");
+    const line = runs.filter((r) => r.length > 1).map((r) => `<path class="line" d="M${r.map((p) => `${X(p.year)},${Y(p.rating)}`).join("L")}"/>`).join("");
+    const pts = pace.map((p, i) => `<circle class="pt${peaks.includes(p.year) ? " peak" : ""}" data-i="${i}" cx="${X(p.year)}" cy="${Y(p.rating)}" r="${peaks.includes(p.year) ? 6 : 4.5}"/>`).join("");
+    el.innerHTML = `<svg viewBox="0 0 ${Wd} ${H}" role="img" aria-label="Season-by-season pace rating">
+      <g class="grid">${grid}</g><g class="zero"><line x1="${m.l}" x2="${Wd - m.r}" y1="${Y(0)}" y2="${Y(0)}"/></g>
+      ${band}${line}${pts}<g class="axis">${axis}</g>
+      <rect x="${m.l}" y="${m.t}" width="${Wd - m.l - m.r}" height="${H - m.t - m.b}" fill="transparent" class="hit"/>
+    </svg><div class="chart-tip" hidden></div>`;
+    const svg = el.querySelector("svg"), tip = el.querySelector(".chart-tip");
+    svg.addEventListener("mousemove", (e) => {
+      const r = svg.getBoundingClientRect();
+      const vx = ((e.clientX - r.left) / r.width) * Wd;
+      let best = 0, bd = 1e9;
+      pace.forEach((p, i) => { const dd = Math.abs(X(p.year) - vx); if (dd < bd) { bd = dd; best = i; } });
+      const p = pace[best];
+      tip.hidden = false;
+      tip.style.left = `${(X(p.year) / Wd) * r.width}px`;
+      tip.style.top = `${(Y(p.rating) / H) * r.height}px`;
+      tip.textContent = `${p.year}: ${F1.pct(p.rating)} (${F1.secs(p.rating, LAP)}) · ${p.races} races vs. teammate`;
+    });
+    svg.addEventListener("mouseleave", () => (tip.hidden = true));
+  }
+  function niceStep(raw) {
+    const p = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / p;
+    return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p;
+  }
+})().catch((e) => {
+  document.getElementById("main").innerHTML = `<div class="empty">Something went wrong loading this driver (${F1.esc(e.message)}).</div>`;
+});
+</script>
+</body>
+</html>

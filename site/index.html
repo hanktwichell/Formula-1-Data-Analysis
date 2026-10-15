@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Top 100 · Teammate Delta</title>
+<meta name="description" content="The 100 fastest Formula 1 drivers over one lap, 1950 to today, rated from every teammate qualifying head-to-head.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'%3E%3Cpolygon points='6,0 32,0 26,20 0,20' fill='%23e10600'/%3E%3C/svg%3E">
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Formula 1 · 1950 – today</div>
+    <h1>The 100 fastest drivers over one lap</h1>
+    <p class="lede">The only fair comparison in F1 is the driver in the other car. Every qualifying session since 1950 is reduced to teammate gaps. Those gaps form one web, linked through every driver who changed teams, and the web is solved all at once. A win over a teammate only counts for as much as that teammate proved against everyone else.</p>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="tiles" id="tiles"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2 id="board-title">Peak one-lap pace</h2>
+        <div class="legend-note" id="board-note"></div>
+      </div>
+      <div class="controls">
+        <div class="seg" role="group" aria-label="Rating">
+          <button type="button" data-metric="peak" aria-pressed="true">Peak</button>
+          <button type="button" data-metric="career" aria-pressed="false">Career</button>
+        </div>
+        <select id="era" aria-label="Filter by era">
+          <option value="">All eras</option>
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      <ol class="board" id="board"><li class="loading" style="padding:24px">Loading rankings…</li></ol>
+    </div>
+    <p class="legend-note" style="margin-top:12px">
+      <b>Gap</b> is the estimated qualifying gap to the median rated F1 driver, as a share of lap time (and in seconds on a 90-second lap), expressed in modern-era terms. Negative is faster.
+      The bar shows the estimate ±1 standard error. <b>H2H</b> is how often the driver out-qualified a teammate. <b>Opp.</b> is the average rating of the teammates they faced: beating a strong teammate is worth more than beating a weak one, and the model accounts for that through the whole web.
+      <a href="methodology.html">How this works →</a>
+    </p>
+  </section>
+</main>
+
+<script src="assets/common.js"></script>
+<script>
+(async function () {
+  F1.header("index.html");
+  const { meta, drivers } = await F1.getJSON("data/rankings.json");
+  F1.footer(meta);
+
+  document.getElementById("tiles").innerHTML = [
+    ["Teammate comparisons", meta.comparisons.toLocaleString(), "qualifying sessions, same car"],
+    ["Drivers rated", meta.drivers.toLocaleString(), `${meta.eligible} with ${meta.minRaces}+ races vs. a teammate`],
+    ["Seasons", `${Object.keys(meta.seasonScale)[0]}–${meta.lastSeason}`, "Indianapolis 500 excluded"],
+    ["Typical teammate gap", `${meta.refScalePct.toFixed(2)}%`, "median, 2010s–today"],
+  ].map(([k, v, s]) => `<div class="card tile"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s}</div></div>`).join("");
+
+  const eraSel = document.getElementById("era");
+  for (let d = 1950; d <= meta.lastSeason; d += 10) {
+    eraSel.insertAdjacentHTML("beforeend", `<option value="${d}">${d}s</option>`);
+  }
+
+  let metric = "peak";
+  const params = new URLSearchParams(location.search);
+  if (params.get("metric") === "career") metric = "career";
+  if (params.get("era")) eraSel.value = params.get("era");
+
+  function val(d) { return metric === "peak" ? d.rating : d.career; }
+  function se(d) { return metric === "peak" ? d.se : d.careerSe; }
+
+  function render() {
+    document.querySelectorAll("[data-metric]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.metric === metric)));
+    const era = eraSel.value ? +eraSel.value : null;
+    const sorted = drivers.slice().sort((a, b) => val(a) - val(b));
+    sorted.forEach((d, i) => (d._rank = i + 1));
+    const list = sorted.filter((d) => !era || (d.first <= era + 9 && d.last >= era)).slice(0, 100);
+
+    document.getElementById("board-title").textContent =
+      (metric === "peak" ? "Peak one-lap pace" : "Career one-lap pace") + (era ? ` · drivers active in the ${era}s` : "");
+    document.getElementById("board-note").textContent = metric === "peak"
+      ? `Average of each driver's best ${meta.peakSeasons} seasons. Ranked drivers need ${meta.minRaces}+ races against a teammate.`
+      : `Every season weighted by races. Ranked drivers need ${meta.minRaces}+ races against a teammate.`;
+
+    const lo = -0.95, hi = 0.25;
+    const x = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+    const head = `<li><div class="board-row board-head"><div class="r">#</div><div>Driver</div><div class="col-bar">Pace vs. median driver</div><div class="r" style="text-align:right">Gap</div><div style="text-align:right">H2H</div><div class="col-opp" style="text-align:right">Opp.</div></div></li>`;
+    const rows = list.map((d) => {
+      const v = val(d), e = se(d);
+      const h2hPct = d.n ? Math.round((d.h2h / d.n) * 100) : 0;
+      const titles = d.titles ? `<span class="titles" title="World Championships">${"★".repeat(Math.min(d.titles, 7))}</span>` : "";
+      return `<li><a class="board-row" href="${F1.driverURL(d.id)}">
+        <div class="rank${d._rank <= 3 ? " top" : ""}">${d._rank}</div>
+        <div class="who">
+          <div class="name">${F1.flag(d.nat)}<span>${F1.esc(d.name)}</span>${titles}</div>
+          <div class="meta">${F1.years(d.first, d.last)} · ${F1.esc(d.teams.slice(0, 4).join(", "))}${d.teams.length > 4 ? "…" : ""}</div>
+        </div>
+        <div class="pacebar" aria-hidden="true">
+          <div class="track"></div>
+          <div class="zero" style="left:${x(0)}%"></div>
+          <div class="ci" style="left:${x(v - e)}%;width:${x(v + e) - x(v - e)}%"></div>
+          <div class="dot" style="left:${x(v)}%"></div>
+        </div>
+        <div class="delta ${F1.cls(v)}">${F1.pct(v)}<span class="sub">${F1.secs(v, meta.refLapSeconds)}</span></div>
+        <div class="h2h"><span class="pct">${h2hPct}%</span><span class="sub">${d.h2h}/${d.n}</span></div>
+        <div class="h2h col-opp" title="Average rating of the teammates faced, weighted by races"><span class="pct ${F1.cls(d.opp)}">${F1.pct(d.opp, 2)}</span><span class="sub">${d.tm} teammates</span></div>
+      </a></li>`;
+    }).join("");
+    document.getElementById("board").innerHTML = head + (rows || `<li class="empty">No ranked drivers in this era.</li>`);
+
+    const p = new URLSearchParams();
+    if (metric !== "peak") p.set("metric", metric);
+    if (era) p.set("era", era);
+    history.replaceState(null, "", p.toString() ? `?${p}` : location.pathname);
+  }
+
+  document.querySelectorAll("[data-metric]").forEach((b) => b.addEventListener("click", () => { metric = b.dataset.metric; render(); }));
+  eraSel.addEventListener("change", render);
+  render();
+})().catch((e) => {
+  document.getElementById("board").innerHTML = `<li class="empty">Couldn't load rankings (${F1.esc(e.message)}).</li>`;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Methodology · Teammate Delta</title>
+<meta name="description" content="How the teammate-based Formula 1 qualifying pace ratings are calculated.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'%3E%3Cpolygon points='6,0 32,0 26,20 0,20' fill='%23e10600'/%3E%3C/svg%3E">
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Methodology</div>
+    <h1>How the ratings work</h1>
+    <p class="lede">The car explains most of the grid order, so this site never compares drivers in different cars directly. It compares each driver with the teammate in the same car, then joins those comparisons into one network covering 1950 to today.</p>
+  </section>
+
+  <article class="prose section" style="padding-top:0">
+    <h2>1. Teammate gaps</h2>
+    <p>For every Grand Prix since 1950 (the Indianapolis 500 is left out, since almost nobody else raced it), drivers count as teammates when they were entered by the same team in the same make of car. Matching on the entrant matters before the 1980s, when privateers raced works chassis. A privately entered Maserati in 1957 was not Fangio's teammate.</p>
+    <p>In the knockout era (2006 onward) the gap comes from the <b>last session both drivers set a time in</b>: Q3 if both reached it, otherwise Q2 or Q1. Before that, each driver's best qualifying time is used. The gap is measured as a log ratio of lap times, so it reads as a percentage and gives the same size whichever driver is listed first:</p>
+    <div class="formula">gap = 100 × ln( time<sub>driver</sub> / time<sub>teammate</sub> )   → negative means the driver was faster</div>
+    <p>Gaps larger than six times the season's typical teammate gap are dropped. These are almost always breakdowns, crashes or sessions run in different conditions. They stay visible, crossed out, in each driver's race-by-race tables.</p>
+
+    <h2>2. Putting eras on one scale</h2>
+    <p>Teammate gaps were far larger in the 1950s (median about 2%) than they are now (about 0.37%). Long circuits, fragile cars and a thinner talent pool all played a part. Without a correction, any dominant 1950s driver would top the list on raw percentages. Each season's gaps are therefore divided by that season's median absolute teammate gap, smoothed over ±2 years, and then multiplied by the modern median. Every rating you see reads as a gap in <b>today's terms</b>.</p>
+
+    <h2>3. Solving the whole web at once</h2>
+    <p>Teammate pairings link up through drivers who changed teams: Senna was paired with Prost, Prost with Lauda, Lauda with Regazzoni, and so on. 537 of the 569 drivers with a usable teammate comparison sit in one connected web reaching from 1950 to today. You can explore any chain on the <a href="compare.html">Compare</a> page.</p>
+    <p>The model doesn't add up how much each driver beat their teammates by. It gives every driver a rating for every season and solves for all of them <b>at the same time</b>, so that the difference between any two teammates' ratings matches what they actually did in qualifying:</p>
+    <div class="formula">gap(a, b, race) ≈ rating(a, season) − rating(b, season) + rookie(a) − rookie(b)<br>rating(d, season) = base(d) + age_curve(age) + drift(d, season)</div>
+    <p>Because everything is solved together, <b>a win over a teammate is only worth what that teammate proved elsewhere in the web</b>. Mark Webber beat Antônio Pizzonia by 0.87%, which looks huge. But Pizzonia also lost to Juan Pablo Montoya by 0.77%, and Montoya is placed by his own links (Räikkönen, Ralf Schumacher). So Pizzonia's rating is set by the web, and Webber gets credit only for beating a driver at that level. A driver who only ever beat one-off substitutes gains almost nothing, because nothing pins down how good those substitutes were.</p>
+    <ul>
+      <li><b>No shrinkage inside the web.</b> Many rating systems pull drivers with little data toward "average". In a teammate network that backfires: it props weak drivers up and inflates everyone who beat them. Here, thin drivers are placed only by their links.</li>
+      <li><b>Age curve</b>: one shared curve, estimated from every driver's career, captures the typical rise into the mid-20s and the fade after 30. Without it, normal career improvement chains from generation to generation and makes each era look faster than the last.</li>
+      <li><b>Drift</b>: on top of the age curve, each driver's rating follows a penalised random walk, so individual careers can rise and fall, but sudden jumps are resisted.</li>
+      <li><b>Rookie terms</b> absorb the typical deficit in a driver's first 8 and first 20 qualifying sessions.</li>
+      <li><b>A light season anchor</b> nudges each season's race-weighted average driver toward a common level. It is weak enough for the web to override it, and stops 75 years of chaining from wandering.</li>
+      <li><b>Robust weighting</b>: Huber-weighted iteratively reweighted least squares stops a single strange session from dominating. A pair-season counts as at most 12 races, so one long pairing can't swamp the web.</li>
+    </ul>
+
+    <h2>4. Peak vs. career, and uncertainty</h2>
+    <p><b>Peak</b> (the default ranking) is a driver's best run of three <i>consecutive</i> seasons, weighted by races, counting only seasons with at least 6 races against a teammate. Using consecutive seasons means one lucky year against a weak teammate can't carry it. <b>Career</b> averages every season, weighted by races. Zero is the median ranked driver.</p>
+    <p>Each rating has a standard error from the model's covariance matrix, which reflects how firmly the driver is tied into the web. Uncertainty enters <i>only</i> at the ranking stage, after the web is solved: each driver's estimate is pulled toward the field average in proportion to its uncertainty (empirical Bayes). A driver linked to the web by one short chain can't top the list on a lucky link, and that caution never leaks into anyone else's rating. To be ranked, a driver needs at least 20 races with a valid teammate comparison and must belong to the main web.</p>
+    <p><b>Opp.</b> on the leaderboard is the average rating of the teammates a driver faced, weighted by races. It is shown so you can see who earned their rating against strong opposition.</p>
+
+    <h2>Known limitations</h2>
+    <ul>
+      <li><b>Number-one and number-two cars.</b> Teams sometimes gave one driver better equipment, a newer chassis or more running. This was common in the 1960s–70s and still happens. The model reads that as driver pace.</li>
+      <li><b>Weather and red flags.</b> One driver might set a time before rain and the other after it. The outlier filter and robust weighting limit the damage, but some noise remains.</li>
+      <li><b>Strategic qualifying.</b> 2003–2005 single-lap qualifying ran on race fuel, and the 2005 aggregate format combined two laps. These are still useful teammate comparisons, but noisier.</li>
+      <li><b>Thin links.</b> Drivers who only ever faced one or two teammates depend heavily on how those teammates are rated. Check the teammate breakdown on each profile.</li>
+      <li><b>One lap only.</b> This measures qualifying speed: not racecraft, tyre management, consistency or wet-weather racing.</li>
+    </ul>
+
+    <h2>Data</h2>
+    <p>All qualifying, entry and result data comes from <a href="https://github.com/f1db/f1db">F1DB</a>, an open, comprehensive Formula 1 database (CC BY 4.0). The pipeline is a single Python script, <code>scripts/build_data.py</code>. A scheduled GitHub Action reruns it each week against the latest F1DB release, so ratings update as the current season goes on.</p>
+  </article>
+</main>
+<script src="assets/common.js"></script>
+<script>
+F1.header("methodology.html");
+F1.getJSON("data/rankings.json").then((r) => F1.footer(r.meta)).catch(() => F1.footer(null));
+</script>
+</body>
+</html>

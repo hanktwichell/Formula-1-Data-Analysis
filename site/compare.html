@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare · Teammate Delta</title>
+<meta name="description" content="Compare any two Formula 1 drivers through the chain of teammates that links them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'%3E%3Cpolygon points='6,0 32,0 26,20 0,20' fill='%23e10600'/%3E%3C/svg%3E">
+<style>
+  .pickers { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: center; }
+  .pickers input { width: 100%; font-size: 17px; padding: 11px 14px; }
+  .vs { font-weight: 700; color: var(--faint); }
+  .duel { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .duel .card { padding: 16px 18px; }
+  .duel .nm { font-size: 22px; font-weight: 700; text-decoration: none; }
+  .verdict { padding: 20px; text-align: center; }
+  .verdict .big { font-family: var(--mono); font-size: 34px; font-weight: 700; line-height: 1.1; }
+  .links { list-style: none; margin: 0; padding: 0; }
+  .link { display: grid; grid-template-columns: minmax(0, 1fr) 150px 110px; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .links li:last-child .link { border-bottom: 0; }
+  .link .who { font-weight: 600; }
+  .link .who a { text-decoration: none; }
+  .link .who a:hover { text-decoration: underline; }
+  .link .meta { font-size: 13px; color: var(--muted); }
+  .link .g { font-family: var(--mono); font-weight: 700; text-align: right; }
+  .link .g small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+  .sumrow { background: var(--surface-2); }
+  @media (max-width: 760px) {
+    .pickers { grid-template-columns: 1fr; }
+    .vs { text-align: center; }
+    .duel { grid-template-columns: 1fr; }
+    .link { grid-template-columns: minmax(0, 1fr) 96px; }
+    .link .g.raw { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">The teammate web</div>
+    <h1>Compare any two drivers</h1>
+    <p class="lede">Drivers from different teams or decades never shared a car, but they're linked through a chain of teammates. Pick two drivers to see the strongest chain between them, the gap at each link, and the model's verdict from the whole web.</p>
+  </section>
+  <section class="section" style="padding-top:0">
+    <div class="pickers">
+      <input type="search" id="a" list="names" placeholder="First driver, e.g. Ayrton Senna" autocomplete="off" aria-label="First driver">
+      <div class="vs">vs</div>
+      <input type="search" id="b" list="names" placeholder="Second driver, e.g. Max Verstappen" autocomplete="off" aria-label="Second driver">
+      <datalist id="names"></datalist>
+    </div>
+  </section>
+  <div id="out"></div>
+</main>
+<script src="assets/common.js"></script>
+<script src="assets/web.js"></script>
+<script>
+(async function () {
+  F1.header("compare.html");
+  const [g, rk] = await Promise.all([F1Web.load(), F1.getJSON("data/rankings.json")]);
+  F1.footer(rk.meta);
+  const LAP = rk.meta.refLapSeconds, esc = F1.esc;
+  const nameToId = {};
+  const list = g.nodes.slice().sort((x, y) => x.name.localeCompare(y.name));
+  list.forEach((n) => (nameToId[n.name.toLowerCase()] = n.id));
+  document.getElementById("names").innerHTML = list.map((n) => `<option value="${esc(n.name)}">${n.first}–${n.last}</option>`).join("");
+
+  const aEl = document.getElementById("a"), bEl = document.getElementById("b"), out = document.getElementById("out");
+  const p = new URLSearchParams(location.search);
+  if (g.byId[p.get("a")]) aEl.value = g.byId[p.get("a")].name;
+  if (g.byId[p.get("b")]) bEl.value = g.byId[p.get("b")].name;
+  if (!aEl.value && !bEl.value) { aEl.value = "Ayrton Senna"; bEl.value = "Max Verstappen"; }
+
+  function resolve(v) {
+    const k = v.trim().toLowerCase();
+    if (nameToId[k]) return nameToId[k];
+    const hit = list.find((n) => n.name.toLowerCase().includes(k));
+    return k && hit ? hit.id : null;
+  }
+
+  function render() {
+    const A = g.byId[resolve(aEl.value)], B = g.byId[resolve(bEl.value)];
+    if (!A || !B) { out.innerHTML = `<p class="muted">Choose two drivers who set a qualifying time alongside a teammate.</p>`; return; }
+    history.replaceState(null, "", `?a=${encodeURIComponent(A.id)}&b=${encodeURIComponent(B.id)}`);
+    if (A.i === B.i) { out.innerHTML = `<p class="muted">Pick two different drivers.</p>`; return; }
+    const path = F1Web.chain(g, A.id, B.id);
+    const card = (n) => `<div class="card"><a class="nm" href="${F1.driverURL(n.id)}">${esc(n.name)}</a>
+      <div class="muted small">${n.first}–${n.last}${n.rank ? ` · #${n.rank} peak pace` : " · unranked"}</div>
+      <div class="tm-stats" style="margin-top:8px"><span>Peak <b class="${F1.cls(n.peak)}">${F1.pct(n.peak)}</b></span><span>Career <b class="${F1.cls(n.career)}">${F1.pct(n.career)}</b></span></div></div>`;
+
+    const both = A.main && B.main;
+    const dPeak = A.peak - B.peak, dCareer = A.career - B.career;
+    const faster = dPeak < 0 ? A : B;
+    let html = `<section class="section"><div class="duel">${card(A)}${card(B)}</div></section>`;
+    html += both ? `<section class="card verdict">
+        <div class="eyebrow">Model verdict · each at their peak</div>
+        <div class="big ${F1.cls(-Math.abs(dPeak))}">${esc(faster.name)} by ${Math.abs(dPeak).toFixed(3)}%</div>
+        <div class="muted">≈ ${Math.abs((dPeak / 100) * LAP).toFixed(3)}s on a ${LAP}s lap in modern terms · career-average gap ${F1.pct(dCareer)} (${esc(A.name.split(" ").slice(-1)[0])} − ${esc(B.name.split(" ").slice(-1)[0])})</div>
+      </section>`
+      : `<section class="card verdict"><div class="muted">One of these drivers sits outside the main teammate web, so the model can't place them against each other.</div></section>`;
+
+    if (path && path.length) {
+      const sum = path.reduce((s, l) => s + l.e.adj, 0);
+      html += `<section class="section"><div class="section-head"><div><h2>Strongest teammate chain · ${path.length} link${path.length > 1 ? "s" : ""}</h2>
+        <div class="legend-note">Each link is a real pairing: the median qualifying gap between those two teammates. The era-adjusted column puts every link on the modern scale so the links can be added up. The verdict above uses every chain in the web at once, not just this one.</div></div></div>
+        <div class="card"><ol class="links">${path.map((l) => `<li><div class="link">
+          <div><div class="who"><a href="${F1.driverURL(l.from.id)}">${esc(l.from.name)}</a> → <a href="${F1.driverURL(l.to.id)}">${esc(l.to.name)}</a></div>
+          <div class="meta">Teammates ${l.e.y0 === l.e.y1 ? l.e.y0 : `${l.e.y0}–${l.e.y1}`} · ${l.e.n} race${l.e.n > 1 ? "s" : ""}</div></div>
+          <div class="g raw ${F1.cls(l.e.raw)}">${F1.pct(l.e.raw)}<small>actual gap</small></div>
+          <div class="g ${F1.cls(l.e.adj)}">${F1.pct(l.e.adj)}<small>era-adjusted</small></div>
+        </div></li>`).join("")}
+        <li><div class="link sumrow"><div class="who">Chain total: ${esc(A.name)} vs ${esc(B.name)}</div><div class="g raw"></div>
+          <div class="g ${F1.cls(sum)}">${F1.pct(sum)}<small>sum of links</small></div></div></li></ol></div></section>`;
+    } else if (path) {
+      html += `<p class="muted">No chain of teammates connects these two drivers.</p>`;
+    }
+    out.innerHTML = html;
+  }
+  [aEl, bEl].forEach((el) => el.addEventListener("change", render));
+  [aEl, bEl].forEach((el) => el.addEventListener("keydown", (e) => { if (e.key === "Enter") render(); }));
+  render();
+})().catch((e) => { document.getElementById("out").innerHTML = `<div class="empty">Couldn't load the teammate web (${F1.esc(e.message)}).</div>`; });
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Driver Search · Teammate Delta</title>
+<meta name="description" content="Search every Formula 1 driver since 1950 and see their teammate-based qualifying pace.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Titillium+Web:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'%3E%3Cpolygon points='6,0 32,0 26,20 0,20' fill='%23e10600'/%3E%3C/svg%3E">
+</head>
+<body>
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">Every driver since 1950</div>
+    <h1>Find a driver</h1>
+    <p class="lede" id="lede">Search the full grid: champions, journeymen, one-race wonders.</p>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <div class="search-bar">
+      <input type="search" id="q" placeholder="Search by name, e.g. Senna, Clark, Piastri" autocomplete="off" autofocus aria-label="Search drivers">
+      <select id="decade" aria-label="Decade"><option value="">Any decade</option></select>
+      <select id="nat" aria-label="Nationality"><option value="">Any nationality</option></select>
+      <select id="sort" aria-label="Sort">
+        <option value="rank">Sort: pace rank</option>
+        <option value="name">Sort: name</option>
+        <option value="starts">Sort: most starts</option>
+        <option value="recent">Sort: most recent</option>
+      </select>
+    </div>
+    <p class="legend-note" id="count" style="margin:12px 0"></p>
+    <div class="results" id="results"><div class="loading">Loading drivers…</div></div>
+    <div style="text-align:center;margin-top:16px"><button id="more" class="theme-toggle" style="width:auto;padding:0 14px;display:none">Show more</button></div>
+  </section>
+</main>
+
+<script src="assets/common.js"></script>
+<script>
+(async function () {
+  F1.header("search.html");
+  const [all, rk] = await Promise.all([F1.getJSON("data/drivers.json"), F1.getJSON("data/rankings.json")]);
+  F1.footer(rk.meta);
+  document.getElementById("lede").textContent =
+    `${all.length.toLocaleString()} drivers who started (or tried to start) a World Championship Grand Prix. ${rk.meta.eligible} have enough teammate comparisons to be ranked.`;
+
+  const fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  all.forEach((d) => (d._k = fold(d.name)));
+
+  const decSel = document.getElementById("decade");
+  for (let y = 1950; y <= rk.meta.lastSeason; y += 10) decSel.insertAdjacentHTML("beforeend", `<option value="${y}">${y}s</option>`);
+  const natSel = document.getElementById("nat");
+  const nats = {};
+  all.forEach((d) => { if (d.nat) nats[d.nat.name] = (nats[d.nat.name] || 0) + 1; });
+  Object.keys(nats).sort().forEach((n) => natSel.insertAdjacentHTML("beforeend", `<option value="${F1.esc(n)}">${F1.esc(n)} (${nats[n]})</option>`));
+
+  const qEl = document.getElementById("q"), sortSel = document.getElementById("sort");
+  const params = new URLSearchParams(location.search);
+  qEl.value = params.get("q") || "";
+  if (params.get("decade")) decSel.value = params.get("decade");
+  if (params.get("nat")) natSel.value = params.get("nat");
+  if (params.get("sort")) sortSel.value = params.get("sort");
+
+  let limit = 60;
+  function card(d) {
+    const rated = d.rating != null;
+    const pill = d.rank ? `<span class="pill ranked">#${d.rank}</span>` : rated ? `<span class="pill">Limited sample</span>` : `<span class="pill">No teammate data</span>`;
+    const pace = rated ? `<span class="mono ${F1.cls(d.rating)}">${F1.pct(d.rating)}</span>` : `<span class="faint">—</span>`;
+    return `<a class="card result" href="${F1.driverURL(d.id)}">
+      <div class="name">${F1.flag(d.nat)}<span>${F1.esc(d.name)}</span></div>
+      <div class="meta">${F1.years(d.first, d.last)} · ${d.starts} start${d.starts === 1 ? "" : "s"}${d.titles ? ` · ${d.titles}× champion` : d.wins ? ` · ${d.wins} win${d.wins === 1 ? "" : "s"}` : ""}</div>
+      <div class="row2">${pill}<span>${pace}</span></div>
+    </a>`;
+  }
+
+  function render() {
+    const q = fold(qEl.value.trim());
+    const dec = decSel.value ? +decSel.value : null;
+    const nat = natSel.value;
+    let list = all.filter((d) =>
+      (!q || q.split(/\s+/).every((t) => d._k.includes(t))) &&
+      (!dec || (d.first <= dec + 9 && d.last >= dec)) &&
+      (!nat || (d.nat && d.nat.name === nat)));
+    const s = sortSel.value;
+    const cmp = {
+      rank: (a, b) => (a.rank || 1e6) - (b.rank || 1e6) || (a.rating ?? 9) - (b.rating ?? 9) || b.starts - a.starts,
+      name: (a, b) => a.name.localeCompare(b.name),
+      starts: (a, b) => b.starts - a.starts,
+      recent: (a, b) => b.last - a.last || b.starts - a.starts,
+    }[s];
+    if (q && s === "rank") {
+      // when searching, prefer names that start with the query
+      list.sort((a, b) => (b._k.startsWith(q) || b._k.includes(" " + q)) - (a._k.startsWith(q) || a._k.includes(" " + q)) || cmp(a, b));
+    } else list.sort(cmp);
+
+    document.getElementById("count").textContent = `${list.length.toLocaleString()} driver${list.length === 1 ? "" : "s"}`;
+    document.getElementById("results").innerHTML = list.slice(0, limit).map(card).join("") || `<div class="empty card">No drivers match.</div>`;
+    document.getElementById("more").style.display = list.length > limit ? "inline-block" : "none";
+
+    const p = new URLSearchParams();
+    if (qEl.value.trim()) p.set("q", qEl.value.trim());
+    if (dec) p.set("decade", dec);
+    if (nat) p.set("nat", nat);
+    if (s !== "rank") p.set("sort", s);
+    history.replaceState(null, "", p.toString() ? `?${p}` : location.pathname);
+  }
+
+  [qEl, decSel, natSel, sortSel].forEach((el) => el.addEventListener("input", () => { limit = 60; render(); }));
+  qEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const first = document.querySelector(".result");
+      if (first) location.href = first.getAttribute("href");
+    }
+  });
+  document.getElementById("more").addEventListener("click", () => { limit += 120; render(); });
+  render();
+})().catch((e) => {
+  document.getElementById("results").innerHTML = `<div class="empty">Couldn't load drivers (${F1.esc(e.message)}).</div>`;
+});
+</script>
+</body>
+</html>
