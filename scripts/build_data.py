@@ -65,7 +65,7 @@ RIDGE_DRIFT = 0.5      # light pull of each season's drift toward the driver's c
 RANDOM_WALK = 20.0     # how strongly a driver's rating resists changing from one season to the next
 PEAK_SEASONS = 3       # peak rating = best run of N consecutive seasons
 PEAK_MIN_RACES = 6     # seasons with fewer teammate comparisons can't count toward the peak
-MIN_RACES = 20         # distinct races with a valid teammate comparison needed to be ranked
+MIN_RACES = 10         # distinct races with a valid teammate comparison needed to be ranked
 REF_LAP_SECONDS = 90.0 # for converting % to seconds in the UI
 
 
